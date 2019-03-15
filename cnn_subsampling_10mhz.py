@@ -1,5 +1,19 @@
-#!/usr/bin/env python
-# coding: utf-8
+"""
+Author: Sharan Ramjee
+Conference: SPAWC 2019
+Conference Paper: Deep Learning for Automatic Interference Identification
+
+Run code for CNN with the 10 MHz dataset for the following experiments:
+    - PCS (Principal Component Subsampling)
+    - Autoencoder
+    - PCA (Principal Component Analysis)
+    - High Magnitude Rank Subsampling
+    - Low Magnitude Rank Subsampling
+    - Uniform Subsampling
+    - Random Subsampling
+    
+Select location/path of the dataset, the type of the dataset, the experiment type, and the final dimensions and run
+"""
 
 import os
 import time
@@ -23,9 +37,12 @@ torch.cuda.empty_cache()
 
 
 dataset_path = '../data'
+# Dataset Types - 'iq', 'fft', 'amplitude phase', 'fft amplitude phase'
 dataset_type = 'fft amplitude phase'
-experiment_type = 
-final_dimensions = 
+# Experiment Types - 'pcs', 'autoencoder', 'pca', 'high magnitude', 'low magnitude', 'uniform', 'random'
+experiment_type = 'pcs'
+# Final Dimensions - 64 (1/2), 32 (1/4), 16 (1/8), 8 (1/16)
+final_dimensions = 64
 
 
 class IteratorTimer():
@@ -142,9 +159,17 @@ def plot_confusion_matrix(cm, title='Confusion matrix', cmap=plt.cm.Blues, label
 class CNN(nn.Module):
     def __init__(self):
         super().__init__()
+        if final_dimensions == 64:
+            self.arch_dims = 60
+        elif final_dimensions == 32:
+            self.arch_dims = 28
+        elif final_dimensions == 16:
+            self.arch_dims = 12
+        elif final_dimensions == 8:
+            self.arch_dims = 4
         self.conv1 = nn.Conv2d(in_channels=1, out_channels=256, kernel_size=(3, 1))
         self.conv2 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(3, 2))
-        self.linear1 = nn.Linear(256*60, 1024)
+        self.linear1 = nn.Linear(256*self.arch_dims, 1024)
         self.linear2 = nn.Linear(1024, 15)
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(0.6)
@@ -156,7 +181,7 @@ class CNN(nn.Module):
         output = self.conv2(output)
         output = self.relu(output)
         output = self.dropout(output)
-        output = output.view(-1, 256*60)
+        output = output.view(-1, 256*self.arch_dims)
         output = self.linear1(output)
         output = self.relu(output)
         output = self.dropout(output)
@@ -217,7 +242,7 @@ def run_experiment(exp_type, exp_dims, x_train, x_test):
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     elif exp_type == 'autoencoder':
         # Autoencoder Setup
-        ae_rate = exp_dims
+        ae_rate = 8
         x_train_new = np.concatenate(x_train, axis=0)
         x_train_new = np.concatenate(x_train_new, axis=0)
         x_train_new = x_train_new.transpose((2, 0, 1))
@@ -232,17 +257,31 @@ def run_experiment(exp_type, exp_dims, x_train, x_test):
         encoding_dim = 2 * ae_rate
         # Encoder
         encoded1 = Dense(192, activation = 'relu')(input_dim)
-        encoded2 = Dense(encoding_dim, activation = 'relu')(encoded1)
+        encoded2 = Dense(128, activation = 'relu')(encoded1)            # Output if final_dims = 64
+        encoded3 = Dense(64, activation = 'relu')(encoded2)             # Output if final_dims = 32
+        encoded4 = Dense(32, activation = 'relu')(encoded3)             # Output if final_dims = 16
+        encoded5 = Dense(encoding_dim, activation = 'relu')(encoded4)   # Output if final_dims = 8
         # Decoder
-        decoded1 = Dense(192, activation = 'relu')(encoded2)
-        decoded2 = Dense(256, activation = 'sigmoid')(decoded1)
+        decoded1 = Dense(32, activation = 'relu')(encoded5)
+        decoded2 = Dense(64, activation = 'relu')(decoded1)
+        decoded3 = Dense(128, activation = 'relu')(decoded2)
+        decoded4 = Dense(192, activation = 'relu')(decoded3)
+        decoded5 = Dense(256, activation = 'sigmoid')(decoded4)
 
-        autoencoder = Model(input = input_dim, output = decoded2)
+        autoencoder = Model(input = input_dim, output = decoded5)
         autoencoder.compile(optimizer = 'adadelta', loss = 'binary_crossentropy')
         autoencoder.fit(x_train_new, x_train_new, nb_epoch = 100, batch_size = 100, shuffle = True, validation_data = (x_test_new, x_test_new),
                         callbacks = [EarlyStopping(monitor='val_loss', patience=5, verbose=0, mode='auto')])
-        encoder = Model(input = input_dim, output = encoded2)
-        encoded_input = Input(shape = (encoding_dim, ))
+        if final_dimensions == 64:
+            enc_output = encoded2
+        elif final_dimensions == 32:
+            enc_output = encoded3
+        elif final_dimensions == 16:
+            enc_output = encoded4
+        elif final_dimensions == 8:
+            enc_output = encoded5
+        encoder = Model(input = input_dim, output = enc_output)
+        encoded_input = Input(shape = (256, ))
 
         x_train_new = encoder.predict(x_train_new)
         x_train_new = x_train_new.transpose()
@@ -258,7 +297,7 @@ def run_experiment(exp_type, exp_dims, x_train, x_test):
         x_test_new = np.array(np.split(x_test_new, 315))
         x_test_new = np.array(np.split(x_test_new, 15))
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    elif exp_type == 'pca'
+    elif exp_type == 'pca':
         # PCA Setup
         from sklearn.decomposition import PCA
         pca_rate = exp_dims
@@ -288,8 +327,8 @@ def run_experiment(exp_type, exp_dims, x_train, x_test):
         x_test_new = np.array(np.split(x_test_new, 315))
         x_test_new = np.array(np.split(x_test_new, 15))
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    elif exp_type == 'high_mag_subsampling'
-        # Heuristic Sub Sampling
+    elif exp_type == 'high magnitude':
+        # High Magnitude Rank Sub Sampling
         n_samples = exp_dims
         new_X_train = list()
         x_train_new = np.concatenate(x_train, axis=0)
@@ -321,7 +360,40 @@ def run_experiment(exp_type, exp_dims, x_train, x_test):
         x_test_new = np.array(np.split(x_test_new, 315))
         x_test_new = np.array(np.split(x_test_new, 15))
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    elif exp_type == 'uniform_subsampling':
+    elif exp_type == 'low magnitude':
+        # Low Magnitude Rank Sub Sampling
+        n_samples = exp_dims
+        new_X_train = list()
+        x_train_new = np.concatenate(x_train, axis=0)
+        x_train_new = np.concatenate(x_train_new, axis=0)
+        for wave_idx, wave in enumerate(x_train_new):
+            amp_list = [(iq_idx, ((iq_val[0] ** 2) + (iq_val[1] ** 2) ** 0.5)) for iq_idx, iq_val in enumerate(wave)]
+            amp_list.sort(key=lambda x: x[1], reverse=False)
+            amp_list = amp_list[:n_samples]
+            amp_list.sort(key=lambda x: x[0])
+            amp_list = [amp_val[0] for amp_val in amp_list]
+            wave = wave[amp_list]
+            new_X_train.append(wave)
+        x_train_new = np.stack(new_X_train)
+        x_train_new = np.array(np.split(x_train_new, 315))
+        x_train_new = np.array(np.split(x_train_new, 15))
+
+        new_X_test = list()
+        x_test_new = np.concatenate(x_test, axis=0)
+        x_test_new = np.concatenate(x_test_new, axis=0)
+        for wave_idx, wave in enumerate(x_test_new):
+            amp_list = [(iq_idx, ((iq_val[0] ** 2) + (iq_val[1] ** 2) ** 0.5)) for iq_idx, iq_val in enumerate(wave)]
+            amp_list.sort(key=lambda x: x[1], reverse=False)
+            amp_list = amp_list[:n_samples]
+            amp_list.sort(key=lambda x: x[0])
+            amp_list = [amp_val[0] for amp_val in amp_list]
+            wave = wave[amp_list]
+            new_X_test.append(wave)
+        x_test_new = np.stack(new_X_test)
+        x_test_new = np.array(np.split(x_test_new, 315))
+        x_test_new = np.array(np.split(x_test_new, 15))
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    elif exp_type == 'uniform':
         # Uniform Sub Sampling
         n_samples = exp_dims
         sample_idx = [num for num in range(0, 128, 128//n_samples)]
@@ -341,7 +413,7 @@ def run_experiment(exp_type, exp_dims, x_train, x_test):
         x_test_new = np.array(np.split(x_test_new, 315))
         x_test_new = np.array(np.split(x_test_new, 15))
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    elif exp_type == 'random_subsampling':
+    elif exp_type == 'random':
         # Random Sub Sampling
         n_samples = exp_dims
         sample_idx = np.random.choice(range(0,128), size=n_samples, replace=False)
@@ -361,16 +433,18 @@ def run_experiment(exp_type, exp_dims, x_train, x_test):
         x_test_new = np.array(np.split(x_test_new, 315))
         x_test_new = np.array(np.split(x_test_new, 15))
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        print('\nAfter application of PCA or subsampling:')
-        print(x_train.shape)
-        print(y_train.shape)
-        print(x_test.shape)
-        print(y_test.shape)
-        print(x_train.strides)
-        print(y_train.strides)
-        print(x_test.strides)
-        print(y_test.strides)
-        return x_train_new, x_test_new
+    x_train = x_train_new
+    x_test = x_test_new
+    print('\nAfter running experiment:')
+    print(x_train.shape)
+    print(y_train.shape)
+    print(x_test.shape)
+    print(y_test.shape)
+    print(x_train.strides)
+    print(y_train.strides)
+    print(x_test.strides)
+    print(y_test.strides)
+    return x_train_new, x_test_new
         
 
 # load iq data, for fft data use 'fft' instead of 'iq'
@@ -379,7 +453,7 @@ x_data, y_data = load_data(folder, dataset_type)
 x_train1, y_train, x_test1, y_test = split_data(x_data, y_data, validation_fraction=0.33)
 x_train, x_test = normalize_data(x_train1, x_test1)
 
-print('Before application of PCA or subsampling:')
+print('Before running experiment:')
 print(x_train.shape)
 print(y_train.shape)
 print(x_test.shape)
@@ -531,4 +605,3 @@ for j in range(21):
     total_acc *= 100
     acc_each_snr.append(total_acc)
 print('Overall accuracy for each SNR:', acc_each_snr)
-
